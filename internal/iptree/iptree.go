@@ -16,7 +16,7 @@ type LevelChild[Child Element] interface {
 }
 
 type BitCounter interface {
-	CountBits() int
+	CountBits() uint32
 }
 
 type IpLevel[Child Element] struct {
@@ -28,11 +28,13 @@ type FirstLevel struct {
 	children [4]uint64
 }
 
-func (fl *FirstLevel) CountBits() int {
-	return bits.OnesCount64(fl.children[0]) +
+func (fl *FirstLevel) CountBits() uint32 {
+	sum := bits.OnesCount64(fl.children[0]) +
 		bits.OnesCount64(fl.children[1]) +
 		bits.OnesCount64(fl.children[2]) +
 		bits.OnesCount64(fl.children[3])
+
+	return uint32(sum)
 }
 
 func (fl *FirstLevel) MergeWith(other *FirstLevel) {
@@ -73,8 +75,15 @@ type ThirdLevel = IpLevel[SecondLevel]
 type FourthLevel = IpLevel[ThirdLevel]
 
 func NewRoot() *FourthLevel {
+	var rootChildren [256]*ThirdLevel
+
+	for i := 0; i < 256; i++ {
+		rootChildren[i] = FourthsChild()
+	}
+
 	return &FourthLevel{
 		newChild: FourthsChild,
+		children: rootChildren,
 	}
 }
 
@@ -110,8 +119,8 @@ func (lvl *IpLevel[Child]) MergeWith(other *IpLevel[Child]) {
 	}
 }
 
-func (lvl *IpLevel[Child]) CountBits() int {
-	sum := 0
+func (lvl *IpLevel[Child]) CountBits() uint32 {
+	var sum uint32 = 0
 	for _, child := range lvl.children {
 		if child == nil {
 			continue
@@ -119,7 +128,7 @@ func (lvl *IpLevel[Child]) CountBits() int {
 
 		counter := any(child).(BitCounter)
 
-		sum += counter.CountBits()
+		sum += uint32(counter.CountBits())
 	}
 
 	return sum
