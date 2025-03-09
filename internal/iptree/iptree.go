@@ -2,6 +2,7 @@ package iptree
 
 import (
 	"math/bits"
+	"sync"
 )
 
 type Merger[T any] interface {
@@ -20,11 +21,13 @@ type BitCounter interface {
 }
 
 type IpLevel[Child Element] struct {
+	sync.RWMutex
 	children [256]*Child
 	newChild func() *Child
 }
 
 type FirstLevel struct {
+	sync.Mutex
 	children [4]uint64
 }
 
@@ -43,7 +46,7 @@ func (fl *FirstLevel) MergeWith(other *FirstLevel) {
 	}
 }
 
-func (fl *FirstLevel) checkByte(part uint8) bool {
+func (fl *FirstLevel) addBit(part uint8) bool {
 	var wordIdx int = 0
 	var oneOffset int = int(part)
 	if part < 64 {
@@ -59,15 +62,19 @@ func (fl *FirstLevel) checkByte(part uint8) bool {
 		oneOffset = oneOffset - 192
 	}
 
-	var mask uint64 = 1 << oneOffset
-	child := fl.children[wordIdx]
-	hasBit := (child & mask) != 0
+	var newBit uint64 = 1 << oneOffset
 
-	if !hasBit {
-		fl.children[wordIdx] |= mask
+	fl.Lock()
+	defer fl.Unlock()
+	child := fl.children[wordIdx]
+	withBit := child | newBit
+
+	if withBit != child {
+		fl.children[wordIdx] = withBit
+		return true
 	}
 
-	return hasBit
+	return false
 }
 
 type SecondLevel = IpLevel[FirstLevel]
@@ -77,9 +84,15 @@ type FourthLevel = IpLevel[ThirdLevel]
 func NewRoot() *FourthLevel {
 	var rootChildren [256]*ThirdLevel
 
+	var wg sync.WaitGroup
 	for i := 0; i < 256; i++ {
-		rootChildren[i] = FourthsChild()
+		newChild := FourthsChild()
+		rootChildren[i] = newChild
+		go newChild.Populate(&wg)
+		wg.Add(1)
 	}
+
+	wg.Wait()
 
 	return &FourthLevel{
 		newChild: FourthsChild,
@@ -135,15 +148,31 @@ func (lvl *IpLevel[Child]) CountBits() uint32 {
 }
 
 func (lvl *IpLevel[Child]) GetChild(part uint8) *Child {
+	lvl.RLock()
 	element := lvl.children[part]
+	lvl.RUnlock()
 	if element != nil {
 		return element
 	}
 
+	lvl.Lock()
+	defer lvl.Unlock()
+	element = lvl.children[part]
+	if element != nil {
+		return element
+	}
 	element = lvl.newChild()
 	lvl.children[part] = element
 
 	return element
+}
+
+func (lvl *IpLevel[Child]) Populate(wg *sync.WaitGroup) {
+	for i := 0; i < 256; i++ {
+		lvl.children[i] = lvl.newChild()
+	}
+
+	wg.Done()
 }
 
 func AddIp(target *FourthLevel, parts [4]uint8) bool {
@@ -152,7 +181,5 @@ func AddIp(target *FourthLevel, parts [4]uint8) bool {
 	lvl1 := lvl2.GetChild(parts[2])
 
 	lastByte := parts[3]
-	bitAdded := !lvl1.checkByte(lastByte)
-
-	return bitAdded
+	return lvl1.addBit(lastByte)
 }

@@ -9,6 +9,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tree "github.com/Veckatimest/uniqipgo/internal/iptree"
@@ -19,6 +20,10 @@ var (
 	file     = flag.String("f", "ip-list.txt", "Input file")
 	cpu_file = flag.String("cpu", "", "CPU profile file")
 	async    = flag.Bool("a", false, "Use async")
+)
+
+const (
+	workerCount = 6
 )
 
 func parseToOctets(ip string) ([4]uint8, error) {
@@ -107,9 +112,7 @@ func ReadToChan(filename string) (chan []string, error) {
 	return str_chan, nil
 }
 
-func CollectIpWorker(str_chan <-chan []string, result chan<- *tree.FourthLevel, error_chan chan<- error) {
-	workerRoot := tree.NewRoot()
-
+func CollectIpWorker(target *tree.FourthLevel, str_chan <-chan []string, error_chan chan<- error) {
 	for batch := range str_chan {
 		for _, line := range batch {
 			octets, err := parseToOctets(line)
@@ -120,18 +123,15 @@ func CollectIpWorker(str_chan <-chan []string, result chan<- *tree.FourthLevel, 
 				error_chan <- err
 				return
 			}
-			tree.AddIp(workerRoot, octets)
-		}
 
+			tree.AddIp(target, octets)
+		}
 	}
 
-	fmt.Printf("Worker puts new root to result chan\n")
-	result <- workerRoot
+	return
 }
 
 func asyncParse(filename string) (uint32, error) {
-	result_chan := make(chan *tree.FourthLevel)
-	err_chan := make(chan error)
 	str_chan, err := ReadToChan(filename)
 
 	if err != nil {
@@ -139,32 +139,35 @@ func asyncParse(filename string) (uint32, error) {
 		return 0, err
 	}
 
-	workerCount := 4
+	mainRoot := tree.NewRoot()
+	var wg sync.WaitGroup
+	errChan := make(chan error, workerCount)
 	for i := 0; i < workerCount; i++ {
-		go CollectIpWorker(str_chan, result_chan, err_chan)
+		wg.Add(1)
+		go func() {
+			CollectIpWorker(mainRoot, str_chan, errChan)
+			wg.Done()
+		}()
 	}
 
-	results := make([]*tree.FourthLevel, 0, workerCount)
-	for i := 0; i < workerCount; i++ {
-		select {
-		case result := <-result_chan:
-			results = append(results, result)
-		case err := <-err_chan:
-			return 0, err
-		}
+	wg.Wait()
+
+	close(errChan)
+	haveErrors := false
+	for err := range errChan {
+		haveErrors = true
+
+		logger.Printf("Error in parsing IPs %s", err.Error())
+	}
+	if haveErrors {
+		os.Exit(1)
 	}
 
-	mainRoot := results[0]
-	for i := 1; i < workerCount; i++ {
-		nextRoot := results[i]
+	countStart := time.Now()
+	count := mainRoot.CountBits()
+	logger.Printf("took %v to count bits", time.Since(countStart))
 
-		mainRoot.MergeWith(nextRoot)
-	}
-	close(result_chan)
-
-	bits := mainRoot.CountBits()
-
-	return bits, nil
+	return count, nil
 }
 
 func main() {
