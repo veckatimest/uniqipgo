@@ -46,7 +46,7 @@ func (fl *FirstLevel) MergeWith(other *FirstLevel) {
 	}
 }
 
-func (fl *FirstLevel) addBit(part uint8) bool {
+func (fl *FirstLevel) addBit(part uint8) uint32 {
 	var wordIdx int = 0
 	var oneOffset int = int(part)
 	if part < 64 {
@@ -65,16 +65,17 @@ func (fl *FirstLevel) addBit(part uint8) bool {
 	var newBit uint64 = 1 << oneOffset
 
 	fl.Lock()
+	// fl.children[wordIdx] |= newBit
 	defer fl.Unlock()
 	child := fl.children[wordIdx]
 	withBit := child | newBit
 
 	if withBit != child {
 		fl.children[wordIdx] = withBit
-		return true
+		return 1
 	}
 
-	return false
+	return 0
 }
 
 type SecondLevel = IpLevel[FirstLevel]
@@ -175,7 +176,8 @@ func (lvl *IpLevel[Child]) Populate(wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-func AddIp(target *FourthLevel, parts [4]uint8) bool {
+// AddIp returns 1 if a new bit is added and 0 if no bits was added
+func AddIp(target *FourthLevel, parts [4]uint8) uint32 {
 	lvl3 := target.GetChild(parts[0])
 	lvl2 := lvl3.GetChild(parts[1])
 	lvl1 := lvl2.GetChild(parts[2])
