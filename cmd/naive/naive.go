@@ -44,10 +44,7 @@ func optimization0(filename string) (uint32, error) {
 			return 0, err
 		}
 
-		added, err := naive.AddStringIp(stringMap, line)
-		if err != nil {
-			return 0, err
-		}
+		added := naive.AddStringIp(stringMap, line)
 		counter += added
 	}
 

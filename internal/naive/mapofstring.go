@@ -1,10 +1,10 @@
 package naive
 
-func AddStringIp(target map[string]bool, ip string) (uint32, error) {
+func AddStringIp(target map[string]bool, ip string) uint32 {
 	if target[ip] {
-		return 0, nil
+		return 0
 	}
 
 	target[ip] = true
-	return 1, nil
+	return 1
 }

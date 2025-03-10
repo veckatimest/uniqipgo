@@ -19,40 +19,14 @@ var (
 	logger   = log.Default()
 	file     = flag.String("f", "ip-list.txt", "Input file")
 	cpu_file = flag.String("cpu", "", "CPU profile file")
-	async    = flag.Bool("a", false, "Use async")
 )
 
 const (
 	BATCH_SIZE = 2000
 )
 
-func readFileAndRun(filename string) (uint32, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return 0, err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	ipTree := tree.NewRoot(1)
-	var ipCount uint32 = 0
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		added, err := tree.AddIp(ipTree, line)
-
-		if err != nil {
-			return 0, fmt.Errorf("Failed to continue parsing IPs, bad IP %s", line)
-		}
-
-		ipCount += added
-	}
-
-	return ipCount, nil
-}
-
 func readToChan(filename string) (chan []string, error) {
-	strCh := make(chan []string, 100)
+	strCh := make(chan []string, 10)
 
 	go func() {
 		file, err := os.Open(filename)
@@ -158,7 +132,6 @@ func main() {
 	flag.Parse()
 
 	filename := *file
-	useAsync := *async
 	cpu_file := *cpu_file
 
 	if cpu_file != "" {
@@ -174,15 +147,12 @@ func main() {
 	start := time.Now()
 	var result uint32
 	var err error = nil
-	if useAsync {
-		logger.Println("Using tree of trees to concurrently add ips")
-		cpuCount := runtime.NumCPU()
-		logger.Printf("system has %d CPUs", cpuCount)
-		result, err = asyncParse(filename, cpuCount*4+1)
-	} else {
-		logger.Println("Using sync algorithm")
-		result, err = readFileAndRun(filename)
-	}
+
+	logger.Println("Using tree of trees to concurrently add ips")
+	cpuCount := runtime.NumCPU()
+	logger.Printf("system has %d CPUs", cpuCount)
+	result, err = asyncParse(filename, cpuCount*4+1)
+
 	logger.Printf("took %v\n", time.Since(start))
 
 	if err != nil {
