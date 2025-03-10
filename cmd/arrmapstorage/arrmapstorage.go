@@ -26,12 +26,12 @@ const (
 )
 
 func readToChan(filename string) (chan []string, error) {
-	str_chan := make(chan []string, 10)
+	strCh := make(chan []string)
 
 	go func() {
 		file, err := os.Open(filename)
 		if err != nil {
-			close(str_chan)
+			close(strCh)
 			return
 		}
 		defer file.Close()
@@ -46,7 +46,7 @@ func readToChan(filename string) (chan []string, error) {
 			count += 1
 
 			if count == BATCH_SIZE {
-				str_chan <- batch
+				strCh <- batch
 				count = 0
 
 				batch = make([]string, 0, BATCH_SIZE)
@@ -54,28 +54,27 @@ func readToChan(filename string) (chan []string, error) {
 		}
 
 		if count != 0 {
-			str_chan <- batch
+			strCh <- batch
 		}
 		fmt.Printf("scanner loop ended\n")
 
-		close(str_chan)
+		close(strCh)
 	}()
 
-	return str_chan, nil
+	return strCh, nil
 }
 
 func collectIpWorker(
 	target *arrofmap.MapStorage,
-	strChan <-chan []string,
+	strCh <-chan []string,
 	errorCh chan<- error,
 ) uint32 {
 	var addedIps uint32
-	for batch := range strChan {
+	for batch := range strCh {
 		for _, line := range batch {
 			added, err := target.AddIp(line)
 
 			if err != nil {
-				// TODO: add contexts here?
 				fmt.Printf("failed to parse ip %s", line)
 				errorCh <- err
 				return 0
