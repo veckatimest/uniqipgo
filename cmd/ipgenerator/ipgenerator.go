@@ -6,10 +6,12 @@ import (
 	rand "math/rand/v2"
 	"os"
 	"strconv"
+	"strings"
 )
 
 var (
 	count = flag.String("n", "100", "Number of ip-addresses")
+	file  = flag.String("f", "ip-list.txt", "Target file")
 )
 
 func makeIp() string {
@@ -21,8 +23,8 @@ func makeIp() string {
 	return fmt.Sprintf("%d.%d.%d.%d\n", p1, p2, p3, p4)
 }
 
-func generateBigIpList(size int) {
-	f, err := os.Create("./ip-list.txt")
+func generateBigIpList(size int, filename string) {
+	f, err := os.Create(filename)
 	if err != nil {
 		fmt.Println(err)
 
@@ -30,19 +32,31 @@ func generateBigIpList(size int) {
 	}
 	defer f.Close()
 
+	var sb strings.Builder
 	for i := 0; i < size; i++ {
-		f.WriteString(makeIp())
+		if i%1000000 == 0 {
+			fmt.Printf("Writing %d\n", i)
+		}
+
+		sb.WriteString(makeIp())
+		if i%10000 == 0 {
+			f.WriteString(sb.String())
+			sb.Reset()
+		}
 	}
+
+	f.WriteString(sb.String())
 }
 
 func main() {
 	flag.Parse()
 	countStr := *count
+	filename := *file
 	countNum, err := strconv.Atoi(countStr)
 
 	if err != nil {
 		fmt.Printf("Invalid number parameter %s", countStr)
 	}
 
-	generateBigIpList(countNum)
+	generateBigIpList(countNum, filename)
 }

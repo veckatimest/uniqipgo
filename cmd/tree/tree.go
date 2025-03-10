@@ -8,8 +8,6 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,28 +23,8 @@ var (
 )
 
 const (
-	WORKER_COUNT = 8
-	BATCH_SIZE   = 1000
+	BATCH_SIZE = 2000
 )
-
-func parseToOctets(ip string) ([4]uint8, error) {
-	strOctets := strings.Split(ip, ".")
-
-	if len(strOctets) != 4 {
-		return [4]uint8{}, fmt.Errorf("Invalid IP %s", ip)
-	}
-
-	result := [4]uint8{}
-	for i := 0; i < 4; i++ {
-		number, err := strconv.Atoi(strOctets[i])
-		if err != nil {
-			return [4]uint8{}, fmt.Errorf("Invalid octet %s", strOctets[i])
-		}
-		result[i] = uint8(number)
-	}
-
-	return result, nil
-}
 
 func readFileAndRun(filename string) (uint32, error) {
 	file, err := os.Open(filename)
@@ -56,24 +34,24 @@ func readFileAndRun(filename string) (uint32, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	ipTree := tree.NewRoot()
+	ipTree := tree.NewRoot(1)
 	var ipCount uint32 = 0
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		added, err := tree.AddIp(ipTree, line)
 
-		lineBytes, err := parseToOctets(line)
 		if err != nil {
 			return 0, fmt.Errorf("Failed to continue parsing IPs, bad IP %s", line)
 		}
 
-		ipCount += tree.AddIp(ipTree, lineBytes)
+		ipCount += added
 	}
 
 	return ipCount, nil
 }
 
-func ReadToChan(filename string) (chan []string, error) {
+func readToChan(filename string) (chan []string, error) {
 	str_chan := make(chan []string, 10)
 
 	go func() {
@@ -113,23 +91,21 @@ func ReadToChan(filename string) (chan []string, error) {
 }
 
 func collectIpWorker(
-	target *tree.FourthLevel,
+	target *tree.RootLevel,
 	strChan <-chan []string,
 	errorCh chan<- error,
 ) uint32 {
 	var addedIps uint32
 	for batch := range strChan {
 		for _, line := range batch {
-			octets, err := parseToOctets(line)
+			added, err := tree.AddIp(target, line)
 
 			if err != nil {
-				// TODO: add contexts here?
 				fmt.Printf("failed to parse ip %s", line)
 				errorCh <- err
 				return 0
 			}
 
-			added := tree.AddIp(target, octets)
 			addedIps += added
 		}
 	}
@@ -137,21 +113,23 @@ func collectIpWorker(
 	return addedIps
 }
 
+type IpBytes [4]byte
+type IpsChan chan IpBytes
+
 func asyncParse(filename string, workerCount int) (uint32, error) {
-	strCh, err := ReadToChan(filename)
+	strCh, err := readToChan(filename)
 
 	if err != nil {
 		fmt.Println("Failed to read file %s", filename)
 		return 0, err
 	}
 
-	mainRoot := tree.NewRoot()
+	mainRoot := tree.NewRoot(workerCount)
 	var wg sync.WaitGroup
 	var totalSum atomic.Uint32
 	errCh := make(chan error, workerCount)
+	wg.Add(workerCount)
 	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-
 		go func() {
 			count := collectIpWorker(mainRoot, strCh, errCh)
 			totalSum.Add(count)
@@ -172,10 +150,6 @@ func asyncParse(filename string, workerCount int) (uint32, error) {
 	if haveErrors {
 		os.Exit(1)
 	}
-
-	// countStart := time.Now()
-	// count := totalSum.Load()
-	// logger.Printf("took %v to count bits", time.Since(countStart))
 
 	return totalSum.Load(), nil
 }
@@ -201,9 +175,10 @@ func main() {
 	var result uint32
 	var err error = nil
 	if useAsync {
+		logger.Println("Using tree of trees to concurrently add ips")
 		cpuCount := runtime.NumCPU()
 		logger.Printf("system has %d CPUs", cpuCount)
-		result, err = asyncParse(filename, cpuCount*2+1)
+		result, err = asyncParse(filename, cpuCount*4+1)
 	} else {
 		logger.Println("Using sync algorithm")
 		result, err = readFileAndRun(filename)
