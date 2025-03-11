@@ -56,7 +56,7 @@ func readToChan(filename string) (chan []string, error) {
 		if count != 0 {
 			strCh <- batch
 		}
-		fmt.Printf("scanner loop ended\n")
+		logger.Printf("scanner loop ended\n")
 
 		close(strCh)
 	}()
