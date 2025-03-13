@@ -15,9 +15,9 @@ const (
 	PARSED_BATCH_SIZE = 2000
 	BYTES_500K        = 500 * 1024
 
-	PARSER_THREADS     = 2
+	PARSER_THREADS     = 1
 	DISPATCHER_THREADS = 1
-	COUNTER_THREADS    = 4 // TODO: rename mapper to counter
+	COUNTER_THREADS    = 1
 	ALL_THREADS        = PARSER_THREADS + DISPATCHER_THREADS + COUNTER_THREADS
 )
 
@@ -55,6 +55,8 @@ func Run(filename string) (uint32, error) {
 	}
 
 	tc := getThreadCount()
+	logger.Printf("Chosen thread count is %+v", tc)
+
 	counterChannels := make([](chan [][4]uint8), tc.counterThreads)
 	for i := 0; i < tc.counterThreads; i++ {
 		counterChannels[i] = make(chan [][4]uint8, 7)

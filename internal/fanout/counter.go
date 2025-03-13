@@ -3,17 +3,15 @@ package fanout
 import (
 	"sync"
 	"sync/atomic"
+
+	tree "github.com/Veckatimest/uniqipgo/internal/iptree"
 )
 
-func counter(workerCh <-chan [][4]uint8, addrPool *sync.Pool) uint32 {
-	store := make(map[[4]uint8]bool)
+func counter(root *tree.RootLevel, workerCh <-chan [][4]uint8, addrPool *sync.Pool) uint32 {
 	var count uint32
 	for addressBatch := range workerCh {
 		for _, address := range addressBatch {
-			if !store[address] {
-				store[address] = true
-				count++
-			}
+			count += tree.AddParsedIpOptimistic(root, address)
 		}
 		addressBatch = addressBatch[:0]
 		addrPool.Put(addressBatch)
@@ -27,9 +25,11 @@ func runCounters(counterChans [](chan [][4]uint8), addrBatchPool *sync.Pool, tc 
 	var sum atomic.Uint32
 	wg.Add(tc.counterThreads)
 
+	tree := tree.NewRoot(tc.counterThreads)
+
 	for i := 0; i < tc.counterThreads; i++ {
 		go func(idx int) {
-			mapCount := counter(counterChans[idx], addrBatchPool)
+			mapCount := counter(tree, counterChans[idx], addrBatchPool)
 
 			sum.Add(mapCount)
 			wg.Done()

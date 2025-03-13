@@ -58,3 +58,14 @@ func AddIp(target *RootLevel, ip string) (uint32, error) {
 	lastByte := octetVals[3]
 	return lvl1.addIp(lastByte), nil
 }
+
+func AddParsedIpOptimistic(target *RootLevel, ip [4]uint8) uint32 {
+	lvl3 := target.GetChildOptimistic(ip[0])
+	lvl2 := lvl3.GetChildOptimistic(ip[1])
+	lvl1 := lvl2.GetChildOptimistic(ip[2])
+
+	lastByte := ip[3]
+	idx, bit := octetsOffsetAndIdx(lastByte)
+
+	return lvl1.addBitOptimistic(idx, bit)
+}

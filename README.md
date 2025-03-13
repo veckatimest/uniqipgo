@@ -1,6 +1,8 @@
 # uniqipgo
 Calculates number of unique IP v4 in a file
 
+The fastest solution in this repo is in the `cmd/fanout/fanout.go` file.
+
 # Used strategies
 
 ## Naive #0
@@ -49,9 +51,16 @@ Or ~14s for 200mil IPs
 ## Fanout
 ```go run cmd/arrmapstorage/arrmapstorage.go -f ip-list.txt```
 
-Array of maps has 1 issue: if several ips are handled at the same moment and they share equal last octet, they nedd to wait for the Mutex.Lock().
+Array of maps has 2 issues:
+ - if several ips are handled at the same moment, they might have equal last octet, so they need to wait for the Mutex.Lock().
+ - when run on large file (400mi IPs) it starts to eat a lot
 
-In this strategy we have N maps where map for IP is selected by division remainder of IP's last octet by N. In this case we don't need locks for maps.
+In this strategy we have N workers (counters) where the worker for IP is selected by division remainder of IP's last octet by N. This has a benefit that we don't need Mutex, since no 2 threads are going to access the same object.
+
+Also this strategy utilizes small tweaks, like using sync.Pool to reduce number of memory allocations and gc calls and also hand-tweaked number of goroutines per algorightm part.
+
+This algorithm takes ~ 6.5s on my machine for 100mil IPs
+Or ~12s on 200mil IPs
 
 # Ignored stategies
 
@@ -68,5 +77,5 @@ This is probably faster than my strategies, but for smaller files this strategy 
 
 Ip file generator
 ```
-go run cmd/ipgenerator/ipgenerator.go -n 200000000 -f ip-list.txt
+go run cmd/ipgenerator/ipgenerator.go -n 400000000 -f ip-list.txt
 ```

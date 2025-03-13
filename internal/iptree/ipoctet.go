@@ -14,35 +14,36 @@ type IpOctet[Child Element] struct {
 
 type FirstOctet struct {
 	sync.Mutex
-	children [4]uint64
+	bitmap [4]uint64
+}
+
+const (
+	upTo63Mask  = uint8(0b00111111)
+	getIdxShift = uint8(6)
+)
+
+func octetsOffsetAndIdx(octetVal uint8) (idx int, newBit uint64) {
+	idx = int(octetVal) >> getIdxShift // lets us know 2 upper bits
+	offset := upTo63Mask & octetVal    // let's us use 6 lower bits (2^6 = 64 which makes sense since we use uint64)
+	newBit = 1 << offset
+
+	return idx, newBit
 }
 
 func (fl *FirstOctet) addIp(octetVal uint8) uint32 {
-	var wordIdx int = 0
-	var oneOffset int = int(octetVal)
-	if octetVal < 64 {
-		wordIdx = 0
-	} else if octetVal < 128 {
-		wordIdx = 1
-		oneOffset = oneOffset - 64
-	} else if octetVal < 192 {
-		wordIdx = 2
-		oneOffset = oneOffset - 128
-	} else {
-		wordIdx = 3
-		oneOffset = oneOffset - 192
-	}
-
-	var newBit uint64 = 1 << oneOffset
+	idx, newBit := octetsOffsetAndIdx(octetVal)
 
 	fl.Lock()
-	// fl.children[wordIdx] |= newBit
 	defer fl.Unlock()
-	child := fl.children[wordIdx]
-	withBit := child | newBit
+	return fl.addBitOptimistic(idx, newBit)
+}
 
-	if withBit != child {
-		fl.children[wordIdx] = withBit
+func (fl *FirstOctet) addBitOptimistic(idx int, newBit uint64) uint32 {
+	bitmapSection := fl.bitmap[idx]
+	withBit := bitmapSection | newBit
+
+	fl.bitmap[idx] = withBit
+	if withBit != bitmapSection {
 		return 1
 	}
 
@@ -81,6 +82,17 @@ func (lvl *IpOctet[Child]) GetChild(part uint8) *Child {
 	defer lvl.Unlock()
 
 	element = lvl.children[part]
+	if element != nil {
+		return element
+	}
+	element = lvl.newChild()
+	lvl.children[part] = element
+
+	return element
+}
+
+func (lvl *IpOctet[Child]) GetChildOptimistic(part uint8) *Child {
+	element := lvl.children[part]
 	if element != nil {
 		return element
 	}
