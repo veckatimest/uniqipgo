@@ -63,3 +63,10 @@ Didn't give speed benefit
 
 ## Large bitmap, where each bit represents 1 IP
 This is probably faster than my strategies, but for smaller files this strategy takes too much space.
+
+# Util
+
+Ip file generator
+```
+go run cmd/ipgenerator/ipgenerator.go -n 200000000 -f ip-list.txt
+```
