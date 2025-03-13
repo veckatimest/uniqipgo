@@ -37,6 +37,10 @@ func readToChan(filename string) (chan []string, error) {
 		defer file.Close()
 
 		scanner := bufio.NewScanner(file)
+		scanner.Buffer(
+			make([]byte, 512*1024),
+			512*1024,
+		)
 		batch := make([]string, 0, BATCH_SIZE)
 		count := 0
 		for scanner.Scan() {
@@ -137,6 +141,7 @@ func main() {
 	if cpu_file != "" {
 		cpuf, err := os.Create(cpu_file)
 		if err != nil {
+			logger.Fatal("Failed to create file %s", err.Error())
 			os.Exit(1)
 		}
 		defer cpuf.Close()
@@ -156,8 +161,8 @@ func main() {
 	logger.Printf("took %v\n", time.Since(start))
 
 	if err != nil {
-		fmt.Printf("Failed to handle ip list with error %s\n", err.Error())
+		logger.Fatal("Failed to handle ip list with error %s\n", err.Error())
 	}
 
-	fmt.Printf("Total count of unique IPs is %d\n", result)
+	logger.Printf("Total count of unique IPs is %d\n", result)
 }

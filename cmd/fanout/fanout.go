@@ -2,10 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,14 +17,22 @@ import (
 )
 
 const (
-	RAW_BATCH_SIZE    = 2000
-	PARSED_BATCH_SIZE = 2000
-	PARSER_ROUTINES   = 3
+	APP_NAME           = "fanout"
+	RAW_BATCH_SIZE     = 6000
+	PARSED_BATCH_SIZE  = 2000
+	PARSER_THREADS     = 3
+	DISPATCHER_THREADS = 3
+	MAPPER_THREADS     = 8
+	// PARSER_THREADS     = 4
+	// DISPATCHER_THREADS = 2
+	// MAPPER_THREADS     = 7
+	BYTES_500K = 500 * 1024
 )
 
 var (
-	logger = log.Default()
-	file   = flag.String("f", "", "Input file")
+	logger           = log.Default()
+	file             = flag.String("f", "", "Input file")
+	profilingEnabled = flag.Bool("profile", false, "Whether to write profiling data")
 )
 
 func readToChan(filename string, strCh chan<- []string, batchPool *sync.Pool) error {
@@ -33,6 +44,8 @@ func readToChan(filename string, strCh chan<- []string, batchPool *sync.Pool) er
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	buffer := make([]byte, BYTES_500K)
+	scanner.Buffer(buffer, BYTES_500K)
 	var batch []string = batchPool.Get().([]string)
 	count := 0
 	for scanner.Scan() {
@@ -120,9 +133,9 @@ func routedDispatcher(
 func mapCounter(workerCh <-chan [][4]uint8, addrPool *sync.Pool) uint32 {
 	store := make(map[[4]uint8]bool)
 	var count uint32
-
 	for addressBatch := range workerCh {
 		for _, address := range addressBatch {
+			// var addr [3]uint8 = ([3]uint8)(address[0:3])
 			if !store[address] {
 				store[address] = true
 				count++
@@ -140,7 +153,6 @@ func parallelReader(
 	workerChans [](chan [][4]uint8),
 	addrBatchPool *sync.Pool,
 ) error {
-	// workerCnt := len(workerChans)
 	strBatchCh := make(chan []string, 10)
 	parsedAddrCh := make(chan [][4]uint8, 10)
 	errCh := make(chan error, 10)
@@ -160,8 +172,9 @@ func parallelReader(
 	}()
 
 	var parsingWg sync.WaitGroup
-	parsingWg.Add(PARSER_ROUTINES)
-	for i := 0; i < PARSER_ROUTINES; i++ {
+
+	parsingWg.Add(PARSER_THREADS)
+	for i := 0; i < PARSER_THREADS; i++ {
 		go func() {
 			err := batchParser(strBatchCh, parsedAddrCh, &stringBatchPool, addrBatchPool)
 			if err != nil {
@@ -177,9 +190,8 @@ func parallelReader(
 	}()
 
 	var dispatchWg sync.WaitGroup
-	var dispatcherCount = 3
-	dispatchWg.Add(dispatcherCount)
-	for i := 0; i < dispatcherCount; i++ {
+	dispatchWg.Add(DISPATCHER_THREADS)
+	for i := 0; i < DISPATCHER_THREADS; i++ {
 		go func() {
 			routedDispatcher(parsedAddrCh, workerChans, addrBatchPool)
 			dispatchWg.Done()
@@ -201,33 +213,33 @@ func parallelReader(
 	return nil
 }
 
-func run(filename string, workerCount int) (uint32, error) {
-	workerChannels := make([](chan [][4]uint8), workerCount)
-	for i := 0; i < workerCount; i++ {
+func run(filename string) (uint32, error) {
+
+	workerChannels := make([](chan [][4]uint8), MAPPER_THREADS)
+	for i := 0; i < MAPPER_THREADS; i++ {
 		workerChannels[i] = make(chan [][4]uint8, 7)
 	}
 
 	var wg sync.WaitGroup
 	var sum atomic.Uint32
-	wg.Add(workerCount)
-
-	parsedIpPool := sync.Pool{
+	wg.Add(MAPPER_THREADS)
+	addrBatchPool := sync.Pool{
 		New: func() any {
-			return make([][4]uint8, 0, PARSED_BATCH_SIZE)
+			return make([][4]uint8, 0, RAW_BATCH_SIZE) // used for 2 purposes, taking larger size
 		},
 	}
 
-	for i := 0; i < workerCount; i++ {
+	for i := 0; i < MAPPER_THREADS; i++ {
 		go func(idx int) {
 			workerChan := workerChannels[idx]
-			mapCount := mapCounter(workerChan, &parsedIpPool)
+			mapCount := mapCounter(workerChan, &addrBatchPool)
 
 			sum.Add(mapCount)
 			wg.Done()
 		}(i)
 	}
 
-	if readError := parallelReader(filename, workerChannels, &parsedIpPool); readError != nil {
+	if readError := parallelReader(filename, workerChannels, &addrBatchPool); readError != nil {
 		return 0, readError
 	}
 
@@ -236,17 +248,66 @@ func run(filename string, workerCount int) (uint32, error) {
 	return sum.Load(), nil
 }
 
+func dumpMetric(idx int, metricName string) {
+	metricFileName := fmt.Sprintf("profiles/%s_%s_%d.prof", APP_NAME, metricName, idx)
+	metricWriter, err := os.Create(metricFileName)
+	if err != nil {
+		logger.Fatalf("Failed to write %s to %s", metricName, metricFileName)
+	}
+	defer metricWriter.Close()
+
+	pprof.Lookup(metricName).WriteTo(metricWriter, 2)
+}
+
+func profile(profilingCtx context.Context) {
+	cpu_file_name := fmt.Sprintf("%s_cpu.prof", APP_NAME)
+
+	cpuf, err := os.Create(cpu_file_name)
+	defer cpuf.Close()
+	if err != nil {
+		logger.Fatalf("Failed to open file %s for cpu profile: %s", cpu_file_name, err)
+	}
+
+	if err := pprof.StartCPUProfile(cpuf); err != nil {
+		logger.Fatalf("Failed to write cpu profile with error %s", err)
+	}
+	defer pprof.StopCPUProfile()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	count := 0
+	for {
+		select {
+		case <-profilingCtx.Done():
+			{
+				return
+			}
+		case <-ticker.C:
+			{
+				dumpMetric(count, "goroutine")
+				dumpMetric(count, "heap")
+				count++
+			}
+		}
+	}
+}
+
 func main() {
 	flag.Parse()
 
+	baseCtx := context.Background()
+
+	if *profilingEnabled {
+		profilingCtx, cancelFunc := context.WithCancel(baseCtx)
+		go profile(profilingCtx)
+		defer cancelFunc()
+	}
+
 	filename := *file
-	logger.Printf("you chose file %s", filename)
 	cpuCount := runtime.NumCPU()
 	logger.Printf("system has %d CPUs", cpuCount)
-	workerCount := int(float32(cpuCount) * 0.7)
 
 	start := time.Now()
-	count, err := run(filename, workerCount)
+	count, err := run(filename)
 	if err != nil {
 		logger.Fatal(err)
 	}

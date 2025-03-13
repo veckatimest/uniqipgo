@@ -25,7 +25,7 @@ Using `map[[4]uint8]bool`. No need to convert 4 bytes to number, because arrays 
 On my machine for 100mln of addresses it also spends ~36s to count all the addresses
 
 ## Tree
-```go run cmd/naive/naive.go -f ip-list.txt -o 2```
+```go run cmd/tree/tree.go -f ip-list.txt```
 
 This strategy uses approach where every byte of an IP address is a level of a tree.
 
@@ -39,7 +39,27 @@ This alrorithms takes ~8.5s on my 12 cores CPU to cound all the IPs in the list 
 Or ~15s for 200mil IPs
 
 ## Array Of Maps
+```go run cmd/arrmapstorage/arrmapstorage.go -f ip-list.txt```
+
 This strategy utilizes the same ideas as Tree, but instead of having multiple levels of maps, it just has 256 top level maps. Each of these maps has it's own Mutex, so they are modified in parallel.
 
 This algorithm takes ~6.5s on my machine (with 12 cores) for 100mil IPs
 Or ~14s for 200mil IPs
+
+## Fanout
+```go run cmd/arrmapstorage/arrmapstorage.go -f ip-list.txt```
+
+Array of maps has 1 issue: if several ips are handled at the same moment and they share equal last octet, they nedd to wait for the Mutex.Lock().
+
+In this strategy we have N maps where map for IP is selected by division remainder of IP's last octet by N. In this case we don't need locks for maps.
+
+# Ignored stategies
+
+## Manual parsing rune by rune
+I tried this, but split + atoi worked better for me.
+
+## Multiple scanners that scan at 2+ regions of the initial file
+Didn't give speed benefit
+
+## Large bitmap, where each bit represents 1 IP
+This is probably faster than my strategies, but for smaller files this strategy takes too much space.
