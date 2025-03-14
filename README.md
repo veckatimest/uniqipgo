@@ -24,7 +24,7 @@ On my machine for 100mn of addresses it spends ~36s to count all the addresses
 
 Using `map[[4]uint8]bool`. No need to convert 4 bytes to number, because arrays are comparable
 
-On my machine for 100mn of addresses it also spends ~36s to count all the addresses
+On my machine for 100mn of addresses it also spends ~33s to count all the addresses
 
 ## Tree
 ```go run cmd/tree/tree.go -f ip-list.txt```
@@ -39,6 +39,7 @@ This gives us flexibility to run multiple goroutines in parallel, so they can ma
 
 This alrorithms takes ~8.5s on my 12 cores CPU to count all the IPs in the list of 100mn records
 Or ~15s for 200mn IPs
+Or ~31s for 400min IPs
 
 ## Array Of Maps
 ```go run cmd/arrmapstorage/arrmapstorage.go -f ip-list.txt```
@@ -61,7 +62,8 @@ In this strategy we have N workers (counters) where the worker for IP is selecte
 Also this strategy utilizes small tweaks, like using sync.Pool to reduce number of memory allocations and gc calls and also hand-tweaked number of goroutines per algorightm part.
 
 This algorithm takes ~ 6.5s on my machine for 100mil IPs
-Or ~12s on 200mil IPs
+Or ~12s on 200mn IPs
+Or ~26s on 400mn IPs
 
 # Ignored stategies
 
